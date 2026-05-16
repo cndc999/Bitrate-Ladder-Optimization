@@ -4,10 +4,11 @@ This project implements a low-bitrate speech communication system using Differen
 
 ## Key Features
 
-- **Signal-to-Noise Ratio (SNR)**: Quantifying the clarity of reconstructed audio.
-- **Compression Ratio**: Measuring bandwidth savings.
-- **Spectrogram Analysis**: Visual comparison of frequency loss using librosa.
-- **Latency**: Measuring the delay in real-time processing mode.
+- **Real-time FFmpeg Encoding**: Processing across 12 bitrate levels with PSNR, SSIM, and VMAF quality metrics.
+- **Pareto Optimization**: Convex hull-based selection of the most efficient encoding ladder rungs.
+- **ABR Streaming Simulation**: Buffer health monitoring with rebuffering event detection.
+- **Interactive Quality Estimation**: Instant bitrate and resolution analysis using adjustable sliders.
+- **Flexible Video Input**: Support for uploaded videos and built-in synthetic test video generation.
 
 ## Folder Structure
 ```Project
