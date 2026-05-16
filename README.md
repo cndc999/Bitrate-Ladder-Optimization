@@ -1,7 +1,6 @@
 Bitrate-Ladder-Optimization 
 ## Overview
-This project implements a low-bitrate speech communication system using Differential Pulse Code Modulation (DPCM). Our goal is to transmit high-quality voice data over limited bandwidth by reducing data redundancy and utilizing Voice Activity Detection (VAD).
-
+This project focuses on bitrate ladder optimization for adaptive video streaming. It performs multi-bitrate FFmpeg encoding, evaluates video quality using PSNR, SSIM, and VMAF, applies Pareto-based optimization, and simulates ABR streaming performance.
 ## Key Features
 
 - **Real-time FFmpeg Encoding**: Processing across 12 bitrate levels with PSNR, SSIM, and VMAF quality metrics.
