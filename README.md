@@ -59,7 +59,6 @@ pip install streamlit numpy plotly opencv-python-headless scikit-image scipy pan
 ### How to Run 
 Launch the interactive dashboard:
 ```
-cd src
 streamlit run app.py
 ```
 
