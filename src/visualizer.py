@@ -90,10 +90,13 @@ def plot_efficiency_heatmap(quality_data: list[dict]) -> go.Figure:
         color="efficiency",
         color_continuous_scale=["#1e3a5f", "#38bdf8", "#4ade80"],
         labels={"target_bitrate": "Target Bitrate (kbps)", "efficiency": "PSNR / Mbps"},
-        **_DARK,
+        template="plotly_dark",
     )
-    fig.update_layout(height=280, margin=dict(t=20, b=40),
-                      coloraxis_colorbar=dict(title="Efficiency"))
+    fig.update_layout(
+        paper_bgcolor="#0a0e1a", plot_bgcolor="#0f172a",
+        height=280, margin=dict(t=20, b=40),
+        coloraxis_colorbar=dict(title="Efficiency"),
+    )
     fig.update_xaxes(**_GRID)
     fig.update_yaxes(**_GRID)
     return fig
