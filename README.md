@@ -53,9 +53,6 @@ For Windows
 pip install -r requirements.txt
 ```
 ```
-pip install streamlit numpy plotly opencv-python-headless scikit-image scipy pandas
-``` 
-
 ### How to Run 
 Launch the interactive dashboard:
 ```
