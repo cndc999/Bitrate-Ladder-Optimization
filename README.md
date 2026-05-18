@@ -52,7 +52,7 @@ For Windows
 ```
 pip install -r requirements.txt
 ```
-```
+
 ### How to Run 
 Launch the interactive dashboard:
 ```
