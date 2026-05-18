@@ -23,7 +23,6 @@ This project focuses on bitrate ladder optimization for adaptive video streaming
 │   ├── video_io.py          # Video input/output (upload, synthetic gen, frame extract)
 │   └── visualizer.py        # Plotly charts, heatmaps, diff maps
 │
-
 ├── app.py                   # Main Streamlit UI (calls src/ only, no logic)
 └── requirements.txt         # Project dependencies
 ```
