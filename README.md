@@ -12,19 +12,19 @@ This project focuses on bitrate ladder optimization for adaptive video streaming
 ## Folder Structure
 ```Project
 .
-├── input/                 # Input audio files
-
+├── input/                   # Sample input videos
+│
 ├── src/
-│   ├── __init__.py        # Package initializer
-│   ├── app.py             # Main Streamlit UI application
-│   ├── analytics.py       # Metrics calculation (SNR, compression ratio, quality)
-│   ├── audio_io.py        # Audio input/output handling (record, read, write)
-│   ├── codec_engine.py    # Encoding/decoding logic (DPCM)
-│   ├── vad_handler.py     # Voice Activity Detection processing
-│   ├── visualizer.py      # Plotting and visualization tools
-├── .venv/                 # Virtual environment
-├── requirement.txt        # Project dependencies
-├── README.md              # Project documentation
+│   ├── __init__.py          # Package initializer
+│   ├── encoder.py           # FFmpeg encoding logic (multi-bitrate)
+│   ├── ladder_optimizer.py  # Convex hull / Pareto frontier algorithm
+│   ├── quality_metrics.py   # PSNR, SSIM, VMAF calculation
+│   ├── stream_simulator.py  # ABR streaming simulation (buffer-based)
+│   ├── video_io.py          # Video input/output (upload, synthetic gen, frame extract)
+│   └── visualizer.py        # Plotly charts, heatmaps, diff maps
+│
+├── app.py                   # Main Streamlit UI (calls src/ only, no logic)
+└── requirements.txt         # Project dependencies
 ```
 ## Installation & Setup 
 ### Clone the Repository 
@@ -52,9 +52,6 @@ For Windows
 ```
 pip install -r requirements.txt
 ```
-```
-pip install streamlit numpy plotly opencv-python-headless scikit-image scipy pandas
-``` 
 
 ### How to Run 
 Launch the interactive dashboard:
