@@ -1,4 +1,3 @@
-Bitrate-Ladder-Optimization 
 ## Overview
 This project focuses on bitrate ladder optimization for adaptive video streaming. It performs multi-bitrate FFmpeg encoding, evaluates video quality using PSNR, SSIM, and VMAF, applies Pareto-based optimization, and simulates ABR streaming performance.
 ## Key Features
