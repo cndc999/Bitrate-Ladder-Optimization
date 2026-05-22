@@ -36,9 +36,9 @@ def make_synthetic_video(path: str, width: int = 1280, height: int = 720,
 
         # Animated gradient background
         for y in range(height):
-            r = int(30 + 80 * np.sin(t + y / height * np.pi))
-            g = int(20 + 60 * np.cos(t * 0.7))
-            b = int(40 + 100 * np.sin(t * 1.3 + y / height * 2))
+            r = int(110 + 80 * np.sin(t + y / height * np.pi))   # 110±80 → [30, 190]
+            g = int(80  + 60 * np.cos(t * 0.7))                   # 80±60  → [20, 140]
+            b = int(140 + 100 * np.sin(t * 1.3 + y / height * 2)) # 140±100 → [40, 240]
             frame[y, :] = [b, g, r]
 
         # Moving circles

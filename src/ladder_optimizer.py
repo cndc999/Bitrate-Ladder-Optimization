@@ -12,6 +12,30 @@ from scipy.spatial import ConvexHull
 
 BITRATE_POOL = [150, 250, 400, 600, 900, 1200, 1800, 2500, 3500, 5000, 7000, 10000]
 
+# Bitrate tối đa hợp lý cho từng resolution (kbps)
+# Dưới ngưỡng này thì encode không có ý nghĩa chất lượng
+RESOLUTION_BITRATE_CAP: dict[int, int] = {
+    240:  500,
+    360:  900,
+    480:  1800,
+    720:  4000,
+    1080: 8000,
+    1440: 12000,
+    2160: 20000,  # 4K
+}
+
+# Bitrate tối thiểu hợp lý cho từng resolution (kbps)
+# Dưới ngưỡng này chất lượng quá thấp, không có ý nghĩa
+RESOLUTION_BITRATE_MIN: dict[int, int] = {
+    240:  100,
+    360:  200,
+    480:  400,
+    720:  800,
+    1080: 2000,
+    1440: 4000,
+    2160: 8000,
+}
+
 STANDARD_LADDER = [
     {"label": "240p",  "height": 240,  "bitrate": 200},
     {"label": "360p",  "height": 360,  "bitrate": 500},
@@ -19,6 +43,29 @@ STANDARD_LADDER = [
     {"label": "720p",  "height": 720,  "bitrate": 2500},
     {"label": "1080p", "height": 1080, "bitrate": 5000},
 ]
+
+
+# ── Pool filter ───────────────────────────────────────────────────────────────
+
+def filter_pool_by_resolution(height: int) -> list[int]:
+    """
+    Trả về danh sách bitrate trong BITRATE_POOL phù hợp với resolution đã chọn.
+    Loại bỏ các bitrate quá cao (lãng phí) hoặc quá thấp (chất lượng vô nghĩa).
+
+    Args:
+        height: Chiều cao resolution (px), ví dụ 240, 720, 1080.
+
+    Returns:
+        Danh sách bitrate (kbps) đã lọc, luôn có ít nhất 3 phần tử.
+    """
+    cap = RESOLUTION_BITRATE_CAP.get(height, max(BITRATE_POOL))
+    low = RESOLUTION_BITRATE_MIN.get(height, 0)
+    filtered = [b for b in BITRATE_POOL if low <= b <= cap]
+    # Đảm bảo luôn có ít nhất 3 điểm để convex hull hoạt động
+    if len(filtered) < 3:
+        filtered = sorted(BITRATE_POOL, key=lambda b: abs(b - cap))[:3]
+        filtered = sorted(filtered)
+    return filtered
 
 
 # ── Core algorithm ─────────────────────────────────────────────────────────────

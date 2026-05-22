@@ -20,7 +20,6 @@ from src import (
     compute_quality,
     compute_vmaf_approx,
     build_optimized_ladder,
-    BITRATE_POOL,
     STANDARD_LADDER,
     simulate_streaming,
     make_synthetic_video,
@@ -31,9 +30,8 @@ from src import (
     plot_ladder_comparison,
     plot_streaming_simulation,
 )
-from src.encoder import resolution_for_bitrate
 from src.stream_simulator import BANDWIDTH_PROFILES, streaming_kpis
-from src.ladder_optimizer import bandwidth_savings
+from src.ladder_optimizer import bandwidth_savings, filter_pool_by_resolution, RESOLUTION_BITRATE_CAP
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE CONFIG
@@ -88,6 +86,11 @@ div[data-testid="stSidebar"] * { color: #0f172a !important; }
     text-align: center;
     box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     transition: border-color 0.2s;
+    height: 110px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
 }
 .metric-card:hover {
     border-color: #2563eb;
@@ -191,8 +194,7 @@ def _metric_card(label: str, value: str, unit: str = "") -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown('<div class="main-title" style="font-size:1.6rem;">BLO</div>', unsafe_allow_html=True)
-    st.markdown('<div class="subtitle">Bitrate Ladder Optimizer</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-title" style="font-size:1.6rem;">BITRATE LADDER OPTIMIZER</div>', unsafe_allow_html=True)
     st.markdown("---")
 
     st.markdown('<div class="section-header">Video Input</div>', unsafe_allow_html=True)
@@ -207,8 +209,13 @@ with st.sidebar:
     codec_lib   = "libx264" if "264" in codec_label else "libx265"
     n_rungs     = st.slider("Number of rungs", 3, 7, 5)
 
+    encode_res_map = {
+        "240p": 240, "360p": 360, "480p": 480,
+        "720p": 720, "1080p": 1080, "1440p": 1440, "4K": 2160,
+    }
+
     st.markdown('<div class="section-header">Quality Metric</div>', unsafe_allow_html=True)
-    metric = st.selectbox("Primary metric", ["psnr", "ssmi", "vmaf_approx"])
+    metric = st.selectbox("Primary metric", ["psnr", "ssim", "vmaf_approx"])
 
     st.markdown('<div class="section-header">Streaming Sim</div>', unsafe_allow_html=True)
     bw_scenario = st.selectbox("Bandwidth Scenario",
@@ -229,13 +236,7 @@ with st.sidebar:
 st.markdown('<h1 class="main-title">Bitrate Ladder Optimization</h1>', unsafe_allow_html=True)
 st.markdown('<p class="subtitle">Data Compression & Encoding · Project 2502e · HUST</p>', unsafe_allow_html=True)
 
-c1, c2, c3 = st.columns(3)
-with c1:
-    st.markdown('<div class="info-box">A <b>Bitrate Ladder</b> is a set of video versions at various bitrates, allowing HLS/DASH to select the appropriate quality based on viewer bandwidth.</div>', unsafe_allow_html=True)
-with c2:
-    st.markdown('<div class="info-box"><b>Convex Hull Optimization</b> selects points on the Pareto frontier of the bitrate-quality curve, eliminating inefficient rungs.</div>', unsafe_allow_html=True)
-with c3:
-    st.markdown('<div class="info-box"><b>ABR Streaming Simulation</b> mimics adaptive bitrate algorithms under real-time bandwidth fluctuations.</div>', unsafe_allow_html=True)
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -244,29 +245,30 @@ with c3:
 
 st.markdown('<div class="section-header">Interactive Bitrate Explorer</div>', unsafe_allow_html=True)
 
-sl1, sl2, sl3 = st.columns([2, 2, 1])
+sl1, sl2 = st.columns(2)
 with sl1:
     sel_bitrate = st.slider("Target Bitrate (kbps)", 150, 12000, 2500, step=50,
                              format="%d kbps")
 with sl2:
-    sel_res = st.select_slider("Resolution",
-                                options=["240p", "360p", "480p", "720p", "1080p", "1440p", "4K"],
-                                value="720p")
+    sel_encode_res = st.select_slider(
+        "Target Resolution",
+        options=["240p", "360p", "480p", "720p", "1080p", "1440p", "4K"],
+        value="720p",
+        help="Resolution để encode thực tế và ước tính chất lượng.",
+    )
 
-res_map    = {"240p": 240, "360p": 360, "480p": 480, "720p": 720,
-              "1080p": 1080, "1440p": 1440, "4K": 2160}
-h_px       = res_map[sel_res]
-bpp        = sel_bitrate / (h_px * (h_px * 16 / 9) * 30)
-est_psnr   = float(np.clip(10 * np.log10(1 / max(bpp * 0.01, 1e-8)) * 0.3 + 25, 20, 48))
-est_ssim   = float(np.clip(0.65 + 0.3 * (sel_bitrate / 12000) ** 0.4, 0.5, 0.99))
+encode_height = encode_res_map[sel_encode_res]
 
-with sl3:
-    st.markdown(_metric_card("Est. PSNR", f"{est_psnr:.1f}", "dB"), unsafe_allow_html=True)
+h_px     = encode_height
+bpp      = sel_bitrate / (h_px * (h_px * 16 / 9) * 30)
+est_psnr = float(np.clip(10 * np.log10(1 / max(bpp * 0.01, 1e-8)) * 0.3 + 25, 20, 48))
+est_ssim = float(np.clip(0.65 + 0.3 * (sel_bitrate / 12000) ** 0.4, 0.5, 0.99))
 
+# 4 ô bằng nhau, bỏ 2 ô Target Bitrate và Resolution riêng lẻ
 mc1, mc2, mc3, mc4 = st.columns(4)
 for col, lbl, val, unit in [
     (mc1, "Target Bitrate", f"{sel_bitrate:,}", "kbps"),
-    (mc2, "Resolution",     sel_res,             ""),
+    (mc2, "Resolution",     sel_encode_res,      ""),
     (mc3, "Est. PSNR",      f"{est_psnr:.1f}",   "dB"),
     (mc4, "Est. SSIM",      f"{est_ssim:.3f}",   ""),
 ]:
@@ -317,16 +319,18 @@ if run_btn:
     # Store source frame in memory once
     src_frame = extract_frame(src_path, 0)
 
-    for idx, br in enumerate(BITRATE_POOL):
-        h, label = resolution_for_bitrate(br)
+    # Chỉ encode các bitrate phù hợp với resolution đã chọn
+    active_pool = filter_pool_by_resolution(encode_height)
+
+    for idx, br in enumerate(active_pool):
         out_path = os.path.join(tmpdir, f"enc_{br}k.mp4")
 
         enc_status.markdown(
-            f'<div class="info-box">Encoding <b>{br} kbps @ {label}</b> [{idx+1}/{len(BITRATE_POOL)}]...</div>',
+            f'<div class="info-box">Encoding <b>{br} kbps @ {sel_encode_res}</b> [{idx+1}/{len(active_pool)}]...</div>',
             unsafe_allow_html=True,
         )
-        success = encode_with_ffmpeg(src_path, br, h, out_path, codec=codec_lib)
-        enc_bar.progress((idx + 1) / len(BITRATE_POOL))
+        success = encode_with_ffmpeg(src_path, br, encode_height, out_path, codec=codec_lib)
+        enc_bar.progress((idx + 1) / len(active_pool))
 
         if success and os.path.exists(out_path):
             p, s      = compute_quality(src_path, out_path)
@@ -335,8 +339,8 @@ if run_btn:
             quality_data.append({
                 "target_bitrate": br,
                 "actual_bitrate": actual_br,
-                "height":         h,
-                "label":          label,
+                "height":         encode_height,
+                "label":          sel_encode_res,
                 "psnr":           p,
                 "ssim":           s,
                 "vmaf_approx":    compute_vmaf_approx(p, s),
