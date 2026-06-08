@@ -31,9 +31,7 @@ from src import (
     plot_streaming_simulation,
 )
 from src.stream_simulator import BANDWIDTH_PROFILES, streaming_kpis
-from src.ladder_optimizer import bandwidth_savings, RESOLUTION_BITRATE_CAP
-from src.encoder import resolution_for_bitrate
-from src.ladder_optimizer import BITRATE_POOL
+from src.ladder_optimizer import bandwidth_savings, filter_pool_by_resolution, RESOLUTION_BITRATE_CAP
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE CONFIG
@@ -321,19 +319,18 @@ if run_btn:
     # Store source frame in memory once
     src_frame = extract_frame(src_path, 0)
 
-    # Encode tất cả 12 mức bitrate, mỗi mức tự động chọn resolution phù hợp
-    for idx, br in enumerate(BITRATE_POOL):
+    # Chỉ encode các bitrate phù hợp với resolution đã chọn
+    active_pool = filter_pool_by_resolution(encode_height)
+
+    for idx, br in enumerate(active_pool):
         out_path = os.path.join(tmpdir, f"enc_{br}k.mp4")
 
-        # Tự động chọn resolution theo bitrate
-        height, res_label = resolution_for_bitrate(br)
-
         enc_status.markdown(
-            f'<div class="info-box">Encoding <b>{br} kbps @ {res_label}</b> [{idx+1}/{len(BITRATE_POOL)}]...</div>',
+            f'<div class="info-box">Encoding <b>{br} kbps @ {sel_encode_res}</b> [{idx+1}/{len(active_pool)}]...</div>',
             unsafe_allow_html=True,
         )
-        success = encode_with_ffmpeg(src_path, br, height, out_path, codec=codec_lib)
-        enc_bar.progress((idx + 1) / len(BITRATE_POOL))
+        success = encode_with_ffmpeg(src_path, br, encode_height, out_path, codec=codec_lib)
+        enc_bar.progress((idx + 1) / len(active_pool))
 
         if success and os.path.exists(out_path):
             p, s      = compute_quality(src_path, out_path)
@@ -342,12 +339,12 @@ if run_btn:
             quality_data.append({
                 "target_bitrate": br,
                 "actual_bitrate": actual_br,
-                "height":         height,
-                "label":          res_label,
+                "height":         encode_height,
+                "label":          sel_encode_res,
                 "psnr":           p,
                 "ssim":           s,
                 "vmaf_approx":    compute_vmaf_approx(p, s),
-                "frame":          enc_frame,
+                "frame":          enc_frame,   # stored in memory
             })
 
     enc_status.empty()
