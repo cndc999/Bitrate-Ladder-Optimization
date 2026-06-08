@@ -427,8 +427,7 @@ if st.session_state.results:
             for r_item in STANDARD_LADDER:
                 st.markdown(f'<span class="rung-chip">{r_item["label"]} · {r_item["bitrate"]} kbps</span>',
                             unsafe_allow_html=True)
-            st.markdown(f"<br>**Total:** {sum(r_item['bitrate'] for r_item in STANDARD_LADDER):,} kbps",
-                        unsafe_allow_html=True)
+            # ĐÃ XÓA dòng hiển thị Total của Standard tại đây
 
         with lc2:
             st.markdown(f"**Optimized Ladder** ({metric.upper()})")
@@ -439,19 +438,28 @@ if st.session_state.results:
                     f'{metric.upper()}={r_item[metric]:.2f}</span>',
                     unsafe_allow_html=True,
                 )
-            savings   = bandwidth_savings(optimized, STANDARD_LADDER)
-            total_opt = sum(r_item["actual_bitrate"] for r_item in optimized)
-            st.markdown(f"<br>**Total:** {total_opt:,.0f} kbps", unsafe_allow_html=True)
-            if savings > 0:
+            # ĐÃ XÓA dòng hiển thị Total của Optimized tại đây
+            
+            # Tính toán lại % tiết kiệm sòng phẳng chỉ dựa trên độ phân giải đang chọn
+            opt_heights = set(item.get("height") for item in optimized)
+            std_matched = [item for item in STANDARD_LADDER if item.get("height") in opt_heights]
+            
+            if std_matched:
+                avg_opt = sum(item["actual_bitrate"] for item in optimized) / len(optimized)
+                avg_std = sum(item["bitrate"] for item in std_matched) / len(std_matched)
+                res_savings = float((avg_std - avg_opt) / avg_std * 100) if avg_std > 0 else 0.0
+                std_bitrate_str = f"{avg_std:.0f} kbps avg"
+            else:
+                res_savings = 0.0
+                std_bitrate_str = "N/A"
+
+            # Hiển thị ô màu xanh so sánh chuẩn xác theo độ phân giải được chọn
+            if res_savings > 0:
                 st.markdown(
-                    f'<div class="info-box">Saved <b>{savings:.1f}%</b> bandwidth '
-                    f'compared to the Standard Ladder.</div>',
+                    f'<div class="info-box">Saved <b>{res_savings:.1f}%</b> avg bandwidth '
+                    f'vs Standard {sel_encode_res} ({std_bitrate_str}).</div>',
                     unsafe_allow_html=True,
                 )
-
-        fig_bar, fig_scatter = plot_ladder_comparison(quality_data, optimized, STANDARD_LADDER)
-        st.plotly_chart(fig_bar,     use_container_width=True)
-        st.plotly_chart(fig_scatter, use_container_width=True)
 
     # ── Tab 3 ─────────────────────────────────────────────────────────────────
     with tab3:
