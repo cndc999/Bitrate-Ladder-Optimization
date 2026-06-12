@@ -26,7 +26,7 @@ from src.simulator import BANDWIDTH_PROFILES, simulate_streaming, streaming_kpis
 
 # ── Page setup ─────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="2502e · Bitrate Ladder Optimization",
-                   page_icon="🎬", layout="wide")
+                   page_icon="", layout="wide")
 st.markdown("""
 <style>
 .block-container {padding-top: 2rem;}
@@ -36,7 +36,7 @@ st.markdown("""
 .credit {color:#64748b; font-size:0.95rem;}
 </style>""", unsafe_allow_html=True)
 
-st.title("🎬 Bitrate Ladder Optimization")
+st.title("Bitrate Ladder Optimization")
 st.markdown('<p class="credit">Project <b>2502e</b> · Multimedia &amp; Compression'
             ' &nbsp;|&nbsp; Nguyen Le Quang Anh — 202414611 &nbsp;·&nbsp;'
             ' Nguyen Dang Anh Dung — 202414619</p>', unsafe_allow_html=True)
@@ -45,7 +45,7 @@ st.markdown("**Pipeline:** Source video → Encode at multiple bitrates → "
             "Streaming Simulation")
 
 # ── Sidebar: source video & settings ──────────────────────────────────────────
-st.sidebar.header("⚙️ Settings")
+st.sidebar.header("Settings")
 uploaded = st.sidebar.file_uploader("Source video",
                                     type=["mp4", "mov", "avi", "mkv"])
 max_seconds = st.sidebar.slider("Seconds of video to encode (sample)", 3, 15, 5)
@@ -126,11 +126,11 @@ st.caption(f"Selected from the Pareto frontier of the measured quality curve · 
 
 # ── Tabs follow the pipeline strictly ─────────────────────────────────────────
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "1️⃣ Encode Multiple Bitrates",
-    "2️⃣ Quality (PSNR / SSIM)",
-    "3️⃣ Bitrate–Quality Curves",
-    "4️⃣ Ladder Design",
-    "5️⃣ Streaming Simulation",
+    "Encode Multiple Bitrates",
+    "Quality (PSNR / SSIM)",
+    "Bitrate–Quality Curves",
+    "Ladder Design",
+    "Streaming Simulation",
 ])
 
 # ═══ TAB 1: ENCODE MULTIPLE BITRATES ══════════════════════════════════════════

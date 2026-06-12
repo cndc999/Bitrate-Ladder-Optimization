@@ -69,18 +69,32 @@ def plot_bitrate_filesize(results: list[dict]):
 
 def plot_ladder_comparison(pairs: list[tuple[dict, dict]]):
     """Grouped bars per MATCHED resolution: standard vs optimized bitrate."""
-    fig, ax = plt.subplots(figsize=(9, 3.2))
+    fig, ax = plt.subplots(figsize=(9, 3.6))
     n = len(pairs)
-    ax.bar([i - 0.2 for i in range(n)],
-           [s["actual_bitrate"] for _, s in pairs], 0.4,
-           label="Standard ladder", color=GRAY)
-    ax.bar([i + 0.2 for i in range(n)],
-           [o["actual_bitrate"] for o, _ in pairs], 0.4,
-           label="Optimized ladder", color=GREEN)
+    b1 = ax.bar([i - 0.19 for i in range(n)],
+                [s["actual_bitrate"] for _, s in pairs], 0.30,
+                label="Standard ladder", color=GRAY)
+    b2 = ax.bar([i + 0.19 for i in range(n)],
+                [o["actual_bitrate"] for o, _ in pairs], 0.30,
+                label="Optimized ladder", color=GREEN)
+    # Value labels on top of every bar
+    ax.bar_label(b1, fmt="%.0f", padding=2, fontsize=9, color="#475569")
+    ax.bar_label(b2, fmt="%.0f", padding=2, fontsize=9, color="#14532d",
+                 fontweight="bold")
+    # Bitrate change (%) annotated just above each resolution pair
+    top = max(max(s["actual_bitrate"] for _, s in pairs),
+              max(o["actual_bitrate"] for o, _ in pairs))
+    for i, (o, s) in enumerate(pairs):
+        delta = (o["actual_bitrate"] / s["actual_bitrate"] - 1) * 100
+        color = GREEN if delta < 0 else (GRAY if abs(delta) < 0.5 else AMBER)
+        y = max(o["actual_bitrate"], s["actual_bitrate"]) + top * 0.07
+        ax.text(i, y, f"{delta:+.0f}%", ha="center",
+                fontsize=10, fontweight="bold", color=color)
+    ax.set_ylim(0, top * 1.22)
     ax.set_xticks(range(n), [o["resolution"] for o, _ in pairs])
     ax.set_ylabel("Bitrate (kbps)")
     ax.set_title("Standard vs optimized — matched resolutions only")
-    ax.legend()
+    ax.legend(loc="upper left")
     fig.tight_layout()
     return fig
 
