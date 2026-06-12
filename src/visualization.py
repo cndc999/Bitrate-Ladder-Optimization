@@ -67,19 +67,19 @@ def plot_bitrate_filesize(results: list[dict]):
     return fig
 
 
-def plot_ladder_comparison(std: list[dict], opt: list[dict]):
-    """Grouped bars: standard vs optimized ladder rung bitrates."""
+def plot_ladder_comparison(pairs: list[tuple[dict, dict]]):
+    """Grouped bars per MATCHED resolution: standard vs optimized bitrate."""
     fig, ax = plt.subplots(figsize=(9, 3.2))
-    n = max(len(std), len(opt))
-    ax.bar([i - 0.2 for i in range(len(std))],
-           [r["actual_bitrate"] for r in std], 0.4,
+    n = len(pairs)
+    ax.bar([i - 0.2 for i in range(n)],
+           [s["actual_bitrate"] for _, s in pairs], 0.4,
            label="Standard ladder", color=GRAY)
-    ax.bar([i + 0.2 for i in range(len(opt))],
-           [r["actual_bitrate"] for r in opt], 0.4,
+    ax.bar([i + 0.2 for i in range(n)],
+           [o["actual_bitrate"] for o, _ in pairs], 0.4,
            label="Optimized ladder", color=GREEN)
-    ax.set_xticks(range(n), [f"Rung {i+1}" for i in range(n)])
+    ax.set_xticks(range(n), [o["resolution"] for o, _ in pairs])
     ax.set_ylabel("Bitrate (kbps)")
-    ax.set_title("Standard vs optimized ladder")
+    ax.set_title("Standard vs optimized — matched resolutions only")
     ax.legend()
     fig.tight_layout()
     return fig

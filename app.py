@@ -20,12 +20,13 @@ import streamlit as st
 
 from src.encoder import (CANDIDATE_BITRATES, encode_video, probe_actual_bitrate,
                          file_size_kb, resolution_for_bitrate)
-from src.ladder import standard_ladder, optimized_ladder, bandwidth_savings
+from src.ladder import (STANDARD_LADDER_SPEC, optimized_ladder,
+                        matched_pairs, bandwidth_savings)
 from src.simulator import BANDWIDTH_PROFILES, simulate_streaming, streaming_kpis
 
 # ── Page setup ─────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="2502e · Bitrate Ladder Optimization",
-                   page_icon="", layout="wide")
+                   page_icon="🎬", layout="wide")
 st.markdown("""
 <style>
 .block-container {padding-top: 2rem;}
@@ -35,7 +36,7 @@ st.markdown("""
 .credit {color:#64748b; font-size:0.95rem;}
 </style>""", unsafe_allow_html=True)
 
-st.title("Bitrate Ladder Optimization")
+st.title("🎬 Bitrate Ladder Optimization")
 st.markdown('<p class="credit">Project <b>2502e</b> · Multimedia &amp; Compression'
             ' &nbsp;|&nbsp; Nguyen Le Quang Anh — 202414611 &nbsp;·&nbsp;'
             ' Nguyen Dang Anh Dung — 202414619</p>', unsafe_allow_html=True)
@@ -44,12 +45,12 @@ st.markdown("**Pipeline:** Source video → Encode at multiple bitrates → "
             "Streaming Simulation")
 
 # ── Sidebar: source video & settings ──────────────────────────────────────────
-st.sidebar.header("Settings")
+st.sidebar.header("⚙️ Settings")
 uploaded = st.sidebar.file_uploader("Source video",
                                     type=["mp4", "mov", "avi", "mkv"])
 max_seconds = st.sidebar.slider("Seconds of video to encode (sample)", 3, 15, 5)
 n_rungs = st.sidebar.slider("Rungs in the optimized ladder", 3, 6, 5)
-run = st.sidebar.button("Run analysis", type="primary",
+run = st.sidebar.button("▶ Run analysis", type="primary",
                         disabled=uploaded is None)
 st.sidebar.caption("Requires FFmpeg installed and available on PATH.")
 
@@ -65,34 +66,46 @@ if run:
     with open(src_path, "wb") as f:
         f.write(uploaded.getbuffer())
 
-    results = []
+    # Jobs: 8 candidate encodes (for the quality curve) + the 5 rungs of the
+    # classic standard ladder (so its PSNR/SSIM are measured, not approximated)
+    jobs = [(br, *resolution_for_bitrate(br), "cand") for br in CANDIDATE_BITRATES]
+    jobs += [(br, h, lbl, "std") for (h, lbl, br) in
+             [(h, l, b) for (h, l, b) in STANDARD_LADDER_SPEC]]
+
+    results, std_results, cache = [], [], {}
     progress = st.progress(0.0, text="Encoding...")
-    for i, br in enumerate(CANDIDATE_BITRATES):
-        height, label = resolution_for_bitrate(br)
-        out_path = os.path.join(workdir, f"enc_{br}k.mp4")
-        progress.progress(i / len(CANDIDATE_BITRATES),
-                          text=f"Encoding {br} kbps ({label})...")
-        ok, err = encode_video(src_path, br, out_path, max_seconds)
-        if not ok:
-            st.error(f"Encoding at {br} kbps failed:\n\n```\n{err}\n```")
-            st.stop()
-        psnr, ssim = compute_psnr_ssim(src_path, out_path)
-        results.append({
-            "target_bitrate": br,
-            "actual_bitrate": probe_actual_bitrate(out_path),
-            "label":          label,
-            "resolution":     f"{height}p",
-            "size_kb":        file_size_kb(out_path),
-            "psnr":           psnr,
-            "ssim":           ssim,
-            "path":           out_path,
-        })
+    for i, (br, height, label, kind) in enumerate(jobs):
+        progress.progress(i / len(jobs), text=f"Encoding {br} kbps ({label})...")
+        key = (height, br)
+        if key in cache:
+            entry = cache[key]
+        else:
+            out_path = os.path.join(workdir, f"enc_{height}p_{br}k.mp4")
+            ok, err = encode_video(src_path, br, height, out_path, max_seconds)
+            if not ok:
+                st.error(f"Encoding at {br} kbps failed:\n\n```\n{err}\n```")
+                st.stop()
+            psnr, ssim = compute_psnr_ssim(src_path, out_path)
+            entry = {
+                "target_bitrate": br,
+                "actual_bitrate": probe_actual_bitrate(out_path),
+                "label":          label,
+                "resolution":     f"{height}p",
+                "size_kb":        file_size_kb(out_path),
+                "psnr":           psnr,
+                "ssim":           ssim,
+                "path":           out_path,
+            }
+            cache[key] = entry
+        (results if kind == "cand" else std_results).append(entry)
     progress.progress(1.0, text="Done!")
     st.session_state["results"] = results
+    st.session_state["std_results"] = std_results
 
 if "results" not in st.session_state:
     st.stop()
 results = st.session_state["results"]
+std_results = st.session_state["std_results"]
 
 import pandas as pd   # lazy: only loaded once results exist
 from src.visualization import (plot_target_vs_actual, plot_quality_curves,
@@ -100,8 +113,9 @@ from src.visualization import (plot_target_vs_actual, plot_quality_curves,
                                plot_simulation)
 
 # ── FINAL OUTPUT: the best bitrate set for this video ─────────────────────────
-std = standard_ladder(results)
+std = std_results
 opt = optimized_ladder(results, n_rungs=n_rungs)
+pairs = matched_pairs(opt, std)
 st.success("✅ **Final output — the best bitrate set for this video** "
            "(balances quality vs bandwidth):")
 st.markdown("".join(
@@ -112,16 +126,16 @@ st.caption(f"Selected from the Pareto frontier of the measured quality curve · 
 
 # ── Tabs follow the pipeline strictly ─────────────────────────────────────────
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "Encode Multiple Bitrates",
-    "Quality (PSNR / SSIM)",
-    "Bitrate–Quality Curves",
-    "Ladder Design",
-    "Streaming Simulation",
+    "1️⃣ Encode Multiple Bitrates",
+    "2️⃣ Quality (PSNR / SSIM)",
+    "3️⃣ Bitrate–Quality Curves",
+    "4️⃣ Ladder Design",
+    "5️⃣ Streaming Simulation",
 ])
 
 # ═══ TAB 1: ENCODE MULTIPLE BITRATES ══════════════════════════════════════════
 with tab1:
-    st.subheader("Bitrates Used for Video Encoding")
+    st.subheader("What bitrate was each video actually encoded at?")
     df = pd.DataFrame(results)
     st.dataframe(pd.DataFrame({
         "Target bitrate (kbps)": df["target_bitrate"],
@@ -188,20 +202,27 @@ with tab4:
     st.markdown("".join(
         f'<span class="rung-chip">{r["resolution"]} @ {r["actual_bitrate"]:.0f} kbps</span>'
         for r in opt), unsafe_allow_html=True)
-    st.metric("Bandwidth saved vs standard ladder",
+    st.metric("Bandwidth saved vs standard ladder (same resolutions)",
               f"{bandwidth_savings(opt, std):.1f}%")
-    col1, col2 = st.columns(2)
-    col1.markdown("**Standard ladder (fixed, one-size-fits-all)**")
-    col1.table(pd.DataFrame([{"Rung": r["label"],
-                              "Bitrate (kbps)": round(r["actual_bitrate"]),
-                              "PSNR (dB)": round(r["psnr"], 2),
-                              "SSIM": round(r["ssim"], 4)} for r in std]))
-    col2.markdown(f"**Optimized ladder (Pareto frontier, {n_rungs} rungs)**")
-    col2.table(pd.DataFrame([{"Rung": r["label"],
-                              "Bitrate (kbps)": round(r["actual_bitrate"]),
-                              "PSNR (dB)": round(r["psnr"], 2),
-                              "SSIM": round(r["ssim"], 4)} for r in opt]))
-    st.pyplot(plot_ladder_comparison(std, opt))
+
+    st.markdown("**Head-to-head at matched resolutions** — each optimized rung "
+                "is compared only against the standard rung of the same resolution:")
+    st.dataframe(pd.DataFrame([{
+        "Resolution":        o["resolution"],
+        "Standard (kbps)":   round(s["actual_bitrate"]),
+        "Optimized (kbps)":  round(o["actual_bitrate"]),
+        "Bitrate change (%)": round((o["actual_bitrate"] / s["actual_bitrate"] - 1) * 100, 1),
+        "Standard PSNR (dB)": round(s["psnr"], 2),
+        "Optimized PSNR (dB)": round(o["psnr"], 2),
+    } for o, s in pairs]), use_container_width=True, hide_index=True)
+    st.pyplot(plot_ladder_comparison(pairs))
+
+    with st.expander("Full standard ladder (all 5 rungs, measured)"):
+        st.table(pd.DataFrame([{"Rung": r["label"],
+                                "Target (kbps)": r["target_bitrate"],
+                                "Actual (kbps)": round(r["actual_bitrate"]),
+                                "PSNR (dB)": round(r["psnr"], 2),
+                                "SSIM": round(r["ssim"], 4)} for r in std]))
     st.caption("Method: rungs are picked from the upper convex hull (Pareto "
                "frontier) of the measured bitrate–quality curve, so every rung "
                "is the best quality available at its cost — the per-title "

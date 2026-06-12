@@ -27,14 +27,13 @@ def resolution_for_bitrate(bitrate_kbps: int) -> tuple[int, str]:
         return 1080, "1080p"
 
 
-def encode_video(src_path: str, bitrate_kbps: int, output_path: str,
-                 max_seconds: int = 5) -> tuple[bool, str]:
+def encode_video(src_path: str, bitrate_kbps: int, height: int,
+                 output_path: str, max_seconds: int = 5) -> tuple[bool, str]:
     """
-    Encode the source to one bitrate + matching resolution.
+    Encode the source to one explicit (bitrate, resolution) pair.
     -maxrate/-bufsize cap the encoder so the actual bitrate stays close
     to the target. Returns (success, ffmpeg_error_message).
     """
-    height, _ = resolution_for_bitrate(bitrate_kbps)
     cmd = [
         "ffmpeg", "-y", "-i", src_path,
         "-t", str(max_seconds),
