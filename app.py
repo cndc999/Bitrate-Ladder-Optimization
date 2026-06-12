@@ -1,598 +1,232 @@
 """
-app.py
-──────
-Main Streamlit UI — layout, widgets, and orchestration only.
-All business logic lives in src/.
+2502e — Bitrate Ladder Optimization
+Multimedia & Compression course project
+
+Pipeline (strict order):
+  Source video -> Encode at multiple bitrates -> PSNR/SSIM quality
+  -> Bitrate-Quality Curves -> Ladder Design -> Streaming Simulation
+
+Final output: the BEST set of bitrates for the uploaded video,
+balancing quality against bandwidth.
+
+Authors: Nguyen Le Quang Anh (202414611), Nguyen Dang Anh Dung (202414619)
+Run:  streamlit run app.py   (FFmpeg must be installed)
 """
 
 import os
-import time
 import tempfile
 
-import cv2
-import numpy as np
-import pandas as pd
 import streamlit as st
 
-from src import (
-    encode_with_ffmpeg,
-    get_actual_bitrate,
-    compute_quality,
-    compute_vmaf_approx,
-    build_optimized_ladder,
-    STANDARD_LADDER,
-    simulate_streaming,
-    make_synthetic_video,
-    extract_frame,
-    compute_diff_map,
-    plot_quality_curves,
-    plot_efficiency_heatmap,
-    plot_ladder_comparison,
-    plot_streaming_simulation,
-)
-from src.stream_simulator import BANDWIDTH_PROFILES, streaming_kpis
-from src.ladder_optimizer import bandwidth_savings, filter_pool_by_resolution, RESOLUTION_BITRATE_CAP
+from src.encoder import (CANDIDATE_BITRATES, encode_video, probe_actual_bitrate,
+                         file_size_kb, resolution_for_bitrate)
+from src.ladder import standard_ladder, optimized_ladder, bandwidth_savings
+from src.simulator import BANDWIDTH_PROFILES, simulate_streaming, streaming_kpis
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PAGE CONFIG
-# ─────────────────────────────────────────────────────────────────────────────
-
-st.set_page_config(
-    page_title="Bitrate Ladder Optimizer",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# STYLES
-# ─────────────────────────────────────────────────────────────────────────────
-
+# ── Page setup ─────────────────────────────────────────────────────────────────
+st.set_page_config(page_title="2502e · Bitrate Ladder Optimization",
+                   page_icon="", layout="wide")
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600;700;800&display=swap');
+.block-container {padding-top: 2rem;}
+.rung-chip {display:inline-block; padding:8px 18px; margin:4px 6px 4px 0;
+            border-radius:999px; background:#dcfce7; color:#14532d;
+            font-weight:700; font-size:1.05rem; border:1px solid #86efac;}
+.credit {color:#64748b; font-size:0.95rem;}
+</style>""", unsafe_allow_html=True)
 
-html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+st.title("Bitrate Ladder Optimization")
+st.markdown('<p class="credit">Project <b>2502e</b> · Multimedia &amp; Compression'
+            ' &nbsp;|&nbsp; Nguyen Le Quang Anh — 202414611 &nbsp;·&nbsp;'
+            ' Nguyen Dang Anh Dung — 202414619</p>', unsafe_allow_html=True)
+st.markdown("**Pipeline:** Source video → Encode at multiple bitrates → "
+            "PSNR/SSIM → Bitrate–Quality Curves → Ladder Design → "
+            "Streaming Simulation")
 
-/* ── Background & global text ── */
-.stApp { background: #f8fafc; color: #0f172a; }
+# ── Sidebar: source video & settings ──────────────────────────────────────────
+st.sidebar.header("Settings")
+uploaded = st.sidebar.file_uploader("Source video",
+                                    type=["mp4", "mov", "avi", "mkv"])
+max_seconds = st.sidebar.slider("Seconds of video to encode (sample)", 3, 15, 5)
+n_rungs = st.sidebar.slider("Rungs in the optimized ladder", 3, 6, 5)
+run = st.sidebar.button("Run analysis", type="primary",
+                        disabled=uploaded is None)
+st.sidebar.caption("Requires FFmpeg installed and available on PATH.")
 
-/* ── Sidebar ── */
-div[data-testid="stSidebar"] {
-    background: #ffffff;
-    border-right: 1px solid #cbd5e1;
-    box-shadow: 2px 0 12px rgba(0,0,0,0.03);
-}
-div[data-testid="stSidebar"] * { color: #0f172a !important; }
+if uploaded is None:
+    st.info("⬅ Upload a source video in the sidebar, then press **Run analysis**.")
 
-/* ── Main title ── */
-.main-title {
-    font-family: 'Inter', sans-serif;
-    font-weight: 800; font-size: 2.4rem;
-    color: #1e3a8a; /* High contrast dark blue */
-    letter-spacing: -1px; margin-bottom: 0;
-}
-.subtitle {
-    font-family: 'Fira Code', monospace; font-size: 0.75rem;
-    color: #475569; letter-spacing: 3px;
-    text-transform: uppercase; margin-bottom: 2rem;
-}
+# ── Pipeline steps 1–2: encode all bitrates, measure PSNR/SSIM ────────────────
+if run:
+    from src.quality import compute_psnr_ssim   # lazy import: loads cv2/skimage
 
-/* ── Metric cards ── */
-.metric-card {
-    background: #ffffff;
-    border: 1px solid #cbd5e1;
-    border-radius: 8px;
-    padding: 1.2rem 1.5rem;
-    text-align: center;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    transition: border-color 0.2s;
-    height: 110px;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-}
-.metric-card:hover {
-    border-color: #2563eb;
-}
-.metric-label {
-    font-family: 'Fira Code', monospace; font-size: 0.7rem;
-    color: #475569; text-transform: uppercase;
-    letter-spacing: 1px; margin-bottom: 6px;
-    font-weight: 600;
-}
-.metric-value {
-    font-family: 'Inter', sans-serif;
-    font-weight: 800; font-size: 1.8rem; color: #2563eb;
-}
-.metric-unit { font-size: 0.8rem; color: #64748b; font-weight: 500; }
+    workdir = tempfile.mkdtemp()
+    src_path = os.path.join(workdir, uploaded.name)
+    with open(src_path, "wb") as f:
+        f.write(uploaded.getbuffer())
 
-/* ── Section headers ── */
-.section-header {
-    font-family: 'Fira Code', monospace; font-size: 0.75rem;
-    font-weight: 600;
-    letter-spacing: 2px; text-transform: uppercase; color: #1e40af;
-    border-bottom: 2px solid #cbd5e1;
-    padding-bottom: 8px; margin: 1.8rem 0 1rem;
-}
-
-/* ── Info boxes ── */
-.info-box {
-    background: #ffffff;
-    border: 1px solid #cbd5e1;
-    border-left: 4px solid #2563eb;
-    padding: 1rem; border-radius: 0 8px 8px 0;
-    font-size: 0.9rem; color: #0f172a; margin: 0.5rem 0;
-    line-height: 1.6;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-}
-
-/* ── Rung chips ── */
-.rung-chip {
-    display: inline-block;
-    background: #f1f5f9; border: 1px solid #cbd5e1;
-    border-radius: 4px; padding: 6px 12px; margin: 4px;
-    font-family: 'Fira Code', monospace;
-    font-size: 0.75rem; color: #0f172a;
-    font-weight: 500;
-}
-.optimal-chip {
-    background: #ecfdf5; border-color: #6ee7b7; color: #065f46;
-}
-
-/* ── Run button ── */
-.stButton > button {
-    background: #2563eb; /* Solid blue */
-    color: white; border: none; border-radius: 8px;
-    font-family: 'Inter', sans-serif;
-    font-weight: 700; font-size: 0.95rem;
-    letter-spacing: 0.5px; padding: 0.75rem 2rem;
-    width: 100%; transition: background-color 0.2s;
-}
-.stButton > button:hover {
-    background: #1d4ed8; /* Darker blue on hover */
-    color: white;
-}
-
-/* ── Progress bar ── */
-.stProgress > div > div {
-    background: #2563eb;
-}
-
-/* ── Tabs ── */
-button[data-baseweb="tab"] {
-    font-family: 'Fira Code', monospace !important;
-    font-size: 0.8rem !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.5px;
-    color: #475569 !important;
-}
-button[data-baseweb="tab"][aria-selected="true"] {
-    color: #1e40af !important;
-}
-
-/* ── Selectbox / slider labels ── */
-label { color: #0f172a !important; font-weight: 600 !important; }
-</style>
-""", unsafe_allow_html=True)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _metric_card(label: str, value: str, unit: str = "") -> str:
-    return f"""<div class="metric-card">
-        <div class="metric-label">{label}</div>
-        <div class="metric-value">{value}</div>
-        <div class="metric-unit">{unit}</div>
-    </div>"""
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SIDEBAR
-# ─────────────────────────────────────────────────────────────────────────────
-
-with st.sidebar:
-    st.markdown('<div class="main-title" style="font-size:1.6rem;">BITRATE LADDER OPTIMIZER</div>', unsafe_allow_html=True)
-    st.markdown("---")
-
-    st.markdown('<div class="section-header">Video Input</div>', unsafe_allow_html=True)
-    input_mode = st.radio("Video Source", ["Synthetic", "Upload File"], label_visibility="collapsed")
-    uploaded = None
-    if input_mode == "Upload File":
-        uploaded = st.file_uploader("Upload video", type=["mp4", "mkv", "avi", "mov"],
-                                    label_visibility="collapsed")
-
-    st.markdown('<div class="section-header">Encoding Config</div>', unsafe_allow_html=True)
-    codec_label = st.selectbox("Codec", ["H.264 (libx264)", "H.265 (libx265)"])
-    codec_lib   = "libx264" if "264" in codec_label else "libx265"
-    n_rungs     = st.slider("Number of rungs", 3, 7, 5)
-
-    encode_res_map = {
-        "240p": 240, "360p": 360, "480p": 480,
-        "720p": 720, "1080p": 1080, "1440p": 1440, "4K": 2160,
-    }
-
-    st.markdown('<div class="section-header">Quality Metric</div>', unsafe_allow_html=True)
-    metric = st.selectbox("Primary metric", ["psnr", "ssim", "vmaf_approx"])
-
-    st.markdown('<div class="section-header">Streaming Sim</div>', unsafe_allow_html=True)
-    bw_scenario = st.selectbox("Bandwidth Scenario",
-                                list(BANDWIDTH_PROFILES.keys()) + ["Custom"])
-    custom_bw_input = ""
-    if bw_scenario == "Custom":
-        custom_bw_input = st.text_input("Bandwidth (kbps, comma-separated)",
-                                        "5000,3000,1500,4000,2000,5000")
-
-    st.markdown("---")
-    run_btn = st.button("RUN ANALYSIS", use_container_width=True)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# HEADER
-# ─────────────────────────────────────────────────────────────────────────────
-
-st.markdown('<h1 class="main-title">Bitrate Ladder Optimization</h1>', unsafe_allow_html=True)
-st.markdown('<p class="subtitle">Data Compression & Encoding · Project 2502e · HUST</p>', unsafe_allow_html=True)
-
-
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# INTERACTIVE BITRATE EXPLORER (always visible)
-# ─────────────────────────────────────────────────────────────────────────────
-
-st.markdown('<div class="section-header">Interactive Bitrate Explorer</div>', unsafe_allow_html=True)
-
-sl1, sl2 = st.columns(2)
-with sl1:
-    sel_bitrate = st.slider("Target Bitrate (kbps)", 150, 12000, 2500, step=50,
-                             format="%d kbps")
-with sl2:
-    sel_encode_res = st.select_slider(
-        "Target Resolution",
-        options=["240p", "360p", "480p", "720p", "1080p", "1440p", "4K"],
-        value="720p",
-        help="Resolution để encode thực tế và ước tính chất lượng.",
-    )
-
-encode_height = encode_res_map[sel_encode_res]
-
-h_px     = encode_height
-bpp      = sel_bitrate / (h_px * (h_px * 16 / 9) * 30)
-est_psnr = float(np.clip(10 * np.log10(1 / max(bpp * 0.01, 1e-8)) * 0.3 + 25, 20, 48))
-est_ssim = float(np.clip(0.65 + 0.3 * (sel_bitrate / 12000) ** 0.4, 0.5, 0.99))
-
-# 4 ô bằng nhau, bỏ 2 ô Target Bitrate và Resolution riêng lẻ
-mc1, mc2, mc3, mc4 = st.columns(4)
-for col, lbl, val, unit in [
-    (mc1, "Target Bitrate", f"{sel_bitrate:,}", "kbps"),
-    (mc2, "Resolution",     sel_encode_res,      ""),
-    (mc3, "Est. PSNR",      f"{est_psnr:.1f}",   "dB"),
-    (mc4, "Est. SSIM",      f"{est_ssim:.3f}",   ""),
-]:
-    with col:
-        st.markdown(_metric_card(lbl, val, unit), unsafe_allow_html=True)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SESSION STATE INIT
-# ─────────────────────────────────────────────────────────────────────────────
+    results = []
+    progress = st.progress(0.0, text="Encoding...")
+    for i, br in enumerate(CANDIDATE_BITRATES):
+        height, label = resolution_for_bitrate(br)
+        out_path = os.path.join(workdir, f"enc_{br}k.mp4")
+        progress.progress(i / len(CANDIDATE_BITRATES),
+                          text=f"Encoding {br} kbps ({label})...")
+        ok, err = encode_video(src_path, br, out_path, max_seconds)
+        if not ok:
+            st.error(f"Encoding at {br} kbps failed:\n\n```\n{err}\n```")
+            st.stop()
+        psnr, ssim = compute_psnr_ssim(src_path, out_path)
+        results.append({
+            "target_bitrate": br,
+            "actual_bitrate": probe_actual_bitrate(out_path),
+            "label":          label,
+            "resolution":     f"{height}p",
+            "size_kb":        file_size_kb(out_path),
+            "psnr":           psnr,
+            "ssim":           ssim,
+            "path":           out_path,
+        })
+    progress.progress(1.0, text="Done!")
+    st.session_state["results"] = results
 
 if "results" not in st.session_state:
-    st.session_state.results = None
+    st.stop()
+results = st.session_state["results"]
 
-# ─────────────────────────────────────────────────────────────────────────────
-# MAIN ANALYSIS (triggered by RUN button)
-# ─────────────────────────────────────────────────────────────────────────────
+import pandas as pd   # lazy: only loaded once results exist
+from src.visualization import (plot_target_vs_actual, plot_quality_curves,
+                               plot_bitrate_filesize, plot_ladder_comparison,
+                               plot_simulation)
 
-if run_btn:
-    st.markdown("---")
+# ── FINAL OUTPUT: the best bitrate set for this video ─────────────────────────
+std = standard_ladder(results)
+opt = optimized_ladder(results, n_rungs=n_rungs)
+st.success("✅ **Final output — the best bitrate set for this video** "
+           "(balances quality vs bandwidth):")
+st.markdown("".join(
+    f'<span class="rung-chip">{r["resolution"]} @ {r["actual_bitrate"]:.0f} kbps</span>'
+    for r in opt), unsafe_allow_html=True)
+st.caption(f"Selected from the Pareto frontier of the measured quality curve · "
+           f"saves {bandwidth_savings(opt, std):.1f}% bandwidth vs the standard ladder.")
 
-    # Use a persistent temp dir stored in session_state
-    if "tmpdir_obj" in st.session_state:
-        st.session_state.tmpdir_obj.cleanup()
-    tmpdir_obj = tempfile.TemporaryDirectory()
-    st.session_state.tmpdir_obj = tmpdir_obj
-    tmpdir = tmpdir_obj.name
+# ── Tabs follow the pipeline strictly ─────────────────────────────────────────
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "Encode Multiple Bitrates",
+    "Quality (PSNR / SSIM)",
+    "Bitrate–Quality Curves",
+    "Ladder Design",
+    "Streaming Simulation",
+])
 
-    # ── Step 1: Source video ──────────────────────────────────────────────────
-    progress = st.progress(0, text="Preparing source video...")
-    src_path = os.path.join(tmpdir, "source.mp4")
+# ═══ TAB 1: ENCODE MULTIPLE BITRATES ══════════════════════════════════════════
+with tab1:
+    st.subheader("Bitrates Used for Video Encoding")
+    df = pd.DataFrame(results)
+    st.dataframe(pd.DataFrame({
+        "Target bitrate (kbps)": df["target_bitrate"],
+        "ACTUAL bitrate (kbps)": df["actual_bitrate"].round(0),
+        "Deviation (%)": ((df["actual_bitrate"] - df["target_bitrate"])
+                          / df["target_bitrate"] * 100).round(1),
+        "Resolution":     df["resolution"],
+        "File size (KB)": df["size_kb"].round(0),
+    }), use_container_width=True, hide_index=True)
+    st.pyplot(plot_target_vs_actual(results))
 
-    if input_mode == "Upload File" and uploaded:
-        with open(src_path, "wb") as f:
-            f.write(uploaded.read())
-        st.success(f"Successfully loaded: {uploaded.name}")
-    else:
-        with st.spinner("Generating synthetic test video (1280x720, 3s)..."):
-            make_synthetic_video(src_path)
-        st.success("Synthetic video ready (1280x720, 30 fps, 3 s)")
-
-    # ── Step 2: Multi-bitrate encoding ───────────────────────────────────────
-    progress.progress(10, text="Encoding multiple bitrates...")
-    quality_data = []
-    enc_status   = st.empty()
-    enc_bar      = st.progress(0)
-
-    # Store source frame in memory once
-    src_frame = extract_frame(src_path, 0)
-
-    # Chỉ encode các bitrate phù hợp với resolution đã chọn
-    active_pool = filter_pool_by_resolution(encode_height)
-
-    for idx, br in enumerate(active_pool):
-        out_path = os.path.join(tmpdir, f"enc_{br}k.mp4")
-
-        enc_status.markdown(
-            f'<div class="info-box">Encoding <b>{br} kbps @ {sel_encode_res}</b> [{idx+1}/{len(active_pool)}]...</div>',
-            unsafe_allow_html=True,
-        )
-        success = encode_with_ffmpeg(src_path, br, encode_height, out_path, codec=codec_lib)
-        enc_bar.progress((idx + 1) / len(active_pool))
-
-        if success and os.path.exists(out_path):
-            p, s      = compute_quality(src_path, out_path)
-            actual_br = get_actual_bitrate(out_path) or br
-            enc_frame = extract_frame(out_path, 0)
-            quality_data.append({
-                "target_bitrate": br,
-                "actual_bitrate": actual_br,
-                "height":         encode_height,
-                "label":          sel_encode_res,
-                "psnr":           p,
-                "ssim":           s,
-                "vmaf_approx":    compute_vmaf_approx(p, s),
-                "frame":          enc_frame,   # stored in memory
-            })
-
-    enc_status.empty()
-    enc_bar.empty()
-
-    # ── Step 3: Ladder optimisation ───────────────────────────────────────────
-    progress.progress(70, text="Computing Pareto frontier...")
-    optimized = build_optimized_ladder(quality_data, n_rungs=n_rungs, metric=metric)
-
-    # ── Step 4: Streaming simulation ──────────────────────────────────────────
-    progress.progress(85, text="Running streaming simulation...")
-
-    if bw_scenario == "Custom":
-        try:
-            seq        = [float(x) for x in custom_bw_input.split(",")]
-            bw_profile = (seq * 20)[:60]
-        except Exception:
-            bw_profile = list(BANDWIDTH_PROFILES.values())[0]
-    else:
-        bw_profile = BANDWIDTH_PROFILES.get(bw_scenario, list(BANDWIDTH_PROFILES.values())[0])
-
-    # 1. Giả lập streaming cho mô hình Tối ưu của bạn
-    events_opt = simulate_streaming(optimized,    bw_profile)
-    
-    # 2. XỬ LÝ CHUẨN CHO STANDARD: Lọc đúng độ phân giải tiêu chuẩn để làm hệ quy chiếu đối chiếu
-    opt_heights = set(r.get("height") for r in optimized)
-    
-    matched_std = []
-    for r in STANDARD_LADDER:
-        if r.get("height") in opt_heights:
-            rung_copy = r.copy()
-            # Định dạng lại key để tương thích hoàn toàn với bộ simulator của bạn
-            rung_copy["actual_bitrate"] = r["bitrate"]
-            
-            # Lấy giá trị chất lượng trung bình của Standard ở phân khúc này (thường thấp hơn tối ưu)
-            # Hoặc gán cố định mức nền tiêu chuẩn để thấy rõ sự vượt trội của cấu hình Pareto
-            rung_copy["psnr"] = 35.0  
-            rung_copy["ssim"] = 0.94
-            matched_std.append(rung_copy)
-            
-    # Nếu không tìm thấy nấc trùng khớp, fallback an toàn về chính tập dữ liệu tiêu chuẩn gốc
-    if not matched_std:
-        matched_std = [{"actual_bitrate": r["bitrate"], "psnr": 35.0, "ssim": 0.94, "height": r["height"]} for r in STANDARD_LADDER]
-
-    # 3. Giả lập streaming cho mô hình Tiêu chuẩn thực tế
-    events_std = simulate_streaming(matched_std,  bw_profile)
-
-    progress.progress(100, text="Completed!")
-    time.sleep(0.4)
-    progress.empty()
-
-    # ── Save everything to session_state ─────────────────────────────────────
-    st.session_state.results = {
-        "quality_data": quality_data,
-        "optimized":    optimized,
-        "events_opt":   events_opt,
-        "events_std":   events_std,
-        "bw_profile":   bw_profile,
-        "bw_scenario":  bw_scenario,
-        "metric":       metric,
-        "src_frame":    src_frame,
-    }
-
-# ─────────────────────────────────────────────────────────────────────────────
-# RESULT TABS — rendered from session_state (persists across widget interactions)
-# ─────────────────────────────────────────────────────────────────────────────
-
-if st.session_state.results:
-    st.markdown("---")
-    r            = st.session_state.results
-    quality_data = r["quality_data"]
-    optimized    = r["optimized"]
-    events_opt   = r["events_opt"]
-    events_std   = r["events_std"]
-    bw_profile   = r["bw_profile"]
-    bw_scenario  = r["bw_scenario"]
-    metric       = r["metric"]
-    src_frame    = r["src_frame"]
-
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "Bitrate-Quality Curves",
-        "Ladder Comparison",
-        "Streaming Simulation",
-        "Frame Analysis",
-        "Data Table",
-    ])
-
-    # ── Tab 1 ─────────────────────────────────────────────────────────────────
-    with tab1:
-        st.markdown('<div class="section-header">BITRATE - QUALITY CURVES</div>', unsafe_allow_html=True)
-        st.plotly_chart(plot_quality_curves(quality_data, optimized), use_container_width=True)
-
-        st.markdown('<div class="section-header">EFFICIENCY MAP (PSNR / Mbps)</div>', unsafe_allow_html=True)
-        st.plotly_chart(plot_efficiency_heatmap(quality_data), use_container_width=True)
-
-    # ── Tab 2 ─────────────────────────────────────────────────────────────────
-    with tab2:
-        st.markdown('<div class="section-header">STANDARD VS OPTIMIZED LADDER</div>', unsafe_allow_html=True)
-
-        lc1, lc2 = st.columns(2)
-        with lc1:
-            st.markdown("**Standard ABR Ladder**")
-            for r_item in STANDARD_LADDER:
-                st.markdown(f'<span class="rung-chip">{r_item["label"]} · {r_item["bitrate"]} kbps</span>',
-                            unsafe_allow_html=True)
-            # ĐÃ XÓA dòng hiển thị Total của Standard tại đây
-
-        with lc2:
-            st.markdown(f"**Optimized Ladder** ({metric.upper()})")
-            for r_item in optimized:
-                st.markdown(
-                    f'<span class="rung-chip optimal-chip">'
-                    f'{r_item["label"]} · {r_item["actual_bitrate"]:.0f} kbps · '
-                    f'{metric.upper()}={r_item[metric]:.2f}</span>',
-                    unsafe_allow_html=True,
-                )
-            # ĐÃ XÓA dòng hiển thị Total của Optimized tại đây
-            
-            # Tính toán lại % tiết kiệm sòng phẳng chỉ dựa trên độ phân giải đang chọn
-            opt_heights = set(item.get("height") for item in optimized)
-            std_matched = [item for item in STANDARD_LADDER if item.get("height") in opt_heights]
-            
-            if std_matched:
-                avg_opt = sum(item["actual_bitrate"] for item in optimized) / len(optimized)
-                avg_std = sum(item["bitrate"] for item in std_matched) / len(std_matched)
-                res_savings = float((avg_std - avg_opt) / avg_std * 100) if avg_std > 0 else 0.0
-                std_bitrate_str = f"{avg_std:.0f} kbps avg"
+    st.subheader("Side-by-side comparison of two encodes")
+    labels = [f'{r["target_bitrate"]} kbps → actual {r["actual_bitrate"]:.0f} kbps '
+              f'({r["resolution"]}, {r["size_kb"]:.0f} KB)' for r in results]
+    colA, colB = st.columns(2)
+    for col, default_idx, side in [(colA, 0, "A"), (colB, len(results) - 1, "B")]:
+        with col:
+            idx = st.selectbox(f"Encode {side}", range(len(results)),
+                               index=default_idx,
+                               format_func=lambda i: labels[i], key=f"vid_{side}")
+            r = results[idx]
+            if os.path.exists(r["path"]):
+                with open(r["path"], "rb") as f:
+                    video_bytes = f.read()
+                st.video(video_bytes)
+                st.markdown(f'**Actual bitrate: `{r["actual_bitrate"]:.0f}` kbps** · '
+                            f'{r["resolution"]} · {r["size_kb"]:.0f} KB')
+                st.download_button(f'Download {r["target_bitrate"]}k encode',
+                                   video_bytes,
+                                   file_name=f'encoded_{r["target_bitrate"]}k.mp4',
+                                   key=f"dl_{side}")
             else:
-                res_savings = 0.0
-                std_bitrate_str = "N/A"
+                st.warning("Encoded file no longer exists — run the analysis again.")
 
-            # Hiển thị ô màu xanh so sánh chuẩn xác theo độ phân giải được chọn
-            if res_savings > 0:
-                st.markdown(
-                    f'<div class="info-box">Saved <b>{res_savings:.1f}%</b> avg bandwidth '
-                    f'vs Standard {sel_encode_res} ({std_bitrate_str}).</div>',
-                    unsafe_allow_html=True,
-                )
+# ═══ TAB 2: QUALITY (PSNR / SSIM) ═════════════════════════════════════════════
+with tab2:
+    st.subheader("Per-encode quality vs the source video")
+    st.markdown("- **PSNR (dB)** — pixel fidelity; higher is better, ~35 dB+ is good.\n"
+                "- **SSIM (0–1)** — structural similarity; closer to 1 is better.")
+    st.dataframe(pd.DataFrame({
+        "Encode": [f'{r["target_bitrate"]}k ({r["resolution"]})' for r in results],
+        "Actual bitrate (kbps)": df["actual_bitrate"].round(0),
+        "PSNR (dB)": df["psnr"].round(2),
+        "SSIM":      df["ssim"].round(4),
+    }), use_container_width=True, hide_index=True)
+    best = max(results, key=lambda r: r["psnr"])
+    st.metric("Best PSNR measured",
+              f'{best["psnr"]:.2f} dB',
+              f'at {best["actual_bitrate"]:.0f} kbps ({best["resolution"]})',
+              delta_color="off")
 
-    # ── Tab 3 ─────────────────────────────────────────────────────────────────
-    with tab3:
-        st.markdown('<div class="section-header">ABR STREAMING SIMULATION</div>', unsafe_allow_html=True)
-        st.markdown(
-            f'<div class="info-box">Scenario: <b>{bw_scenario}</b> · Segments: {len(bw_profile)}</div>',
-            unsafe_allow_html=True,
-        )
-        st.plotly_chart(
-            plot_streaming_simulation(events_opt, events_std, bw_profile),
-            use_container_width=True,
-        )
+# ═══ TAB 3: BITRATE–QUALITY CURVES ════════════════════════════════════════════
+with tab3:
+    st.subheader("Quality curves — where does quality saturate?")
+    st.pyplot(plot_quality_curves(results, opt))
+    st.caption("Past the knee of the curve, extra bitrate buys almost no extra "
+               "quality — that is exactly where ladder rungs stop being worth it. "
+               "Green stars = rungs selected for the optimized ladder.")
+    st.pyplot(plot_bitrate_filesize(results))
 
-        kpis_opt = streaming_kpis(events_opt)
-        kpis_std = streaming_kpis(events_std)
-        kc1, kc2, kc3, kc4 = st.columns(4)
-        for col, lbl, val, unit in [
-            (kc1, "Rebuffer Events (Opt)", str(kpis_opt["rebuffer_count"]),                            "events"),
-            (kc2, "Avg PSNR Opt vs Std",   f"{kpis_opt['avg_psnr']:.1f} vs {kpis_std['avg_psnr']:.1f}", "dB"),
-            (kc3, "Avg Bitrate (Opt)",      f"{kpis_opt['avg_bitrate']:.0f}",                         "kbps"),
-            (kc4, "Quality Gain",           f"+{kpis_opt['avg_psnr'] - kpis_std['avg_psnr']:.1f}",    "dB"),
-        ]:
-            with col:
-                st.markdown(_metric_card(lbl, val, unit), unsafe_allow_html=True)
+# ═══ TAB 4: LADDER DESIGN ═════════════════════════════════════════════════════
+with tab4:
+    st.subheader("The designed ladder — the project's final output")
+    st.markdown("".join(
+        f'<span class="rung-chip">{r["resolution"]} @ {r["actual_bitrate"]:.0f} kbps</span>'
+        for r in opt), unsafe_allow_html=True)
+    st.metric("Bandwidth saved vs standard ladder",
+              f"{bandwidth_savings(opt, std):.1f}%")
+    col1, col2 = st.columns(2)
+    col1.markdown("**Standard ladder (fixed, one-size-fits-all)**")
+    col1.table(pd.DataFrame([{"Rung": r["label"],
+                              "Bitrate (kbps)": round(r["actual_bitrate"]),
+                              "PSNR (dB)": round(r["psnr"], 2),
+                              "SSIM": round(r["ssim"], 4)} for r in std]))
+    col2.markdown(f"**Optimized ladder (Pareto frontier, {n_rungs} rungs)**")
+    col2.table(pd.DataFrame([{"Rung": r["label"],
+                              "Bitrate (kbps)": round(r["actual_bitrate"]),
+                              "PSNR (dB)": round(r["psnr"], 2),
+                              "SSIM": round(r["ssim"], 4)} for r in opt]))
+    st.pyplot(plot_ladder_comparison(std, opt))
+    st.caption("Method: rungs are picked from the upper convex hull (Pareto "
+               "frontier) of the measured bitrate–quality curve, so every rung "
+               "is the best quality available at its cost — the per-title "
+               "encoding approach.")
 
-    # ── Tab 4 ─────────────────────────────────────────────────────────────────
-    with tab4:
-        st.markdown('<div class="section-header">PER-RUNG QUALITY ANALYSIS</div>', unsafe_allow_html=True)
+# ═══ TAB 5: STREAMING SIMULATION ══════════════════════════════════════════════
+with tab5:
+    st.subheader("Does the designed ladder survive a real network?")
+    profile_name = st.selectbox("Bandwidth trace", list(BANDWIDTH_PROFILES))
+    bw = BANDWIDTH_PROFILES[profile_name]
 
-        rung_labels = [f"{d['label']} @ {d['actual_bitrate']:.0f} kbps" for d in quality_data]
-        sel_rung    = st.selectbox("Select rung", rung_labels)
-        d_sel       = quality_data[rung_labels.index(sel_rung)]
+    ev_std = simulate_streaming(std, bw)
+    ev_opt = simulate_streaming(opt, bw)
+    k_std, k_opt = streaming_kpis(ev_std), streaming_kpis(ev_opt)
 
-        qc1, qc2, qc3, qc4 = st.columns(4)
-        for col, lbl, val, unit in [
-            (qc1, "Actual Bitrate", f"{d_sel['actual_bitrate']:.0f}", "kbps"),
-            (qc2, "PSNR",          f"{d_sel['psnr']:.2f}",           "dB"),
-            (qc3, "SSIM",          f"{d_sel['ssim']:.4f}",           ""),
-            (qc4, "VMAF Approx",   f"{d_sel['vmaf_approx']:.1f}",    "/100"),
-        ]:
-            with col:
-                st.markdown(_metric_card(lbl, val, unit), unsafe_allow_html=True)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Avg bitrate (Opt vs Std)", f'{k_opt["avg_bitrate"]:.0f} kbps',
+              f'{k_opt["avg_bitrate"] - k_std["avg_bitrate"]:+.0f} kbps')
+    c2.metric("Avg PSNR (Opt vs Std)", f'{k_opt["avg_psnr"]:.2f} dB',
+              f'{k_opt["avg_psnr"] - k_std["avg_psnr"]:+.2f} dB')
+    c3.metric("Rebuffering events (Opt vs Std)", k_opt["rebuffer_count"],
+              k_opt["rebuffer_count"] - k_std["rebuffer_count"],
+              delta_color="inverse")
 
-        st.markdown('<div class="section-header">FRAME PREVIEW</div>', unsafe_allow_html=True)
-        frame_enc = d_sel.get("frame")
-
-        if src_frame is not None and frame_enc is not None:
-            fc1, fc2 = st.columns(2)
-            with fc1:
-                st.markdown("**Original**")
-                st.image(cv2.cvtColor(src_frame, cv2.COLOR_BGR2RGB),
-                         caption="Source (lossless)", use_container_width=True)
-            with fc2:
-                st.markdown(f"**Encoded @ {d_sel['actual_bitrate']:.0f} kbps**")
-                st.image(cv2.cvtColor(frame_enc, cv2.COLOR_BGR2RGB),
-                         caption=f"{d_sel['label']} · PSNR={d_sel['psnr']:.1f} dB · SSIM={d_sel['ssim']:.3f}",
-                         use_container_width=True)
-
-            st.markdown('<div class="section-header">DIFFERENCE MAP (x5 amplified)</div>', unsafe_allow_html=True)
-            st.image(compute_diff_map(src_frame, frame_enc, amplify=5.0),
-                     caption="Brighter areas = higher information loss",
-                     use_container_width=True)
-
-    # ── Tab 5 ─────────────────────────────────────────────────────────────────
-    with tab5:
-        st.markdown('<div class="section-header">RAW QUALITY DATA</div>', unsafe_allow_html=True)
-        df = pd.DataFrame([{
-            "Target Bitrate (kbps)": d["target_bitrate"],
-            "Actual Bitrate (kbps)": round(d["actual_bitrate"], 1),
-            "Resolution":            d["label"],
-            "PSNR (dB)":             round(d["psnr"], 2),
-            "SSIM":                  round(d["ssim"], 4),
-            "VMAF Approx":           round(d["vmaf_approx"], 1),
-            "Efficiency (dB/Mbps)":  round(d["psnr"] / max(d["actual_bitrate"] / 1000, 0.01), 2),
-            "In Ladder":             "Yes" if d in optimized else "",
-        } for d in quality_data])
-
-        st.dataframe(df, use_container_width=True, height=450,
-                     column_config={
-                         "PSNR (dB)": st.column_config.NumberColumn(format="%.2f dB"),
-                         "SSIM":      st.column_config.ProgressColumn(min_value=0, max_value=1),
-                     })
-        st.download_button(
-            "Export CSV",
-            df.to_csv(index=False).encode("utf-8"),
-            "bitrate_ladder_results.csv",
-            "text/csv",
-        )
-
-else:
-    st.markdown("---")
-    st.markdown("""
-    <div style="text-align:center; padding:3rem; opacity:0.45;">
-        <div style="font-family:'Fira Code',monospace; font-size:0.8rem;
-                    letter-spacing:3px; color:#475569; margin-top:1rem; font-weight:600;">
-            CONFIGURE SETTINGS IN SIDEBAR → CLICK RUN ANALYSIS
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# FOOTER
-# ─────────────────────────────────────────────────────────────────────────────
-
-st.markdown("---")
-st.markdown("""
-<div style="text-align:center; font-family:'Fira Code',monospace;
-            font-size:0.7rem; color:#64748b; letter-spacing:1.5px; font-weight:500;">
-    PROJECT 2502e · BITRATE LADDER OPTIMIZATION ·
-    NGUYEN LE QUANG ANH 202414611 · NGUYEN DANG ANH DUNG 202414619
-</div>
-""", unsafe_allow_html=True)
+    st.pyplot(plot_simulation(ev_opt, ev_std, bw))
+    st.caption("The player adapts: when bandwidth crashes, it steps down to a "
+               "lower rung instead of stalling; when bandwidth recovers, it "
+               "climbs back up.")
