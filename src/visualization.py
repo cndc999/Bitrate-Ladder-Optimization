@@ -72,22 +72,22 @@ def plot_ladder_comparison(pairs: list[tuple[dict, dict]]):
     fig, ax = plt.subplots(figsize=(9, 3.6))
     n = len(pairs)
     b1 = ax.bar([i - 0.19 for i in range(n)],
-                [s["actual_bitrate"] for _, s in pairs], 0.30,
-                label="Standard ladder", color=GRAY)
+                [s["target_bitrate"] for _, s in pairs], 0.30,
+                label="Standard ladder (fixed table)", color=GRAY)
     b2 = ax.bar([i + 0.19 for i in range(n)],
                 [o["actual_bitrate"] for o, _ in pairs], 0.30,
-                label="Optimized ladder", color=GREEN)
+                label="Optimized ladder (measured)", color=GREEN)
     # Value labels on top of every bar
     ax.bar_label(b1, fmt="%.0f", padding=2, fontsize=9, color="#475569")
     ax.bar_label(b2, fmt="%.0f", padding=2, fontsize=9, color="#14532d",
                  fontweight="bold")
     # Bitrate change (%) annotated just above each resolution pair
-    top = max(max(s["actual_bitrate"] for _, s in pairs),
+    top = max(max(s["target_bitrate"] for _, s in pairs),
               max(o["actual_bitrate"] for o, _ in pairs))
     for i, (o, s) in enumerate(pairs):
-        delta = (o["actual_bitrate"] / s["actual_bitrate"] - 1) * 100
+        delta = (o["actual_bitrate"] / s["target_bitrate"] - 1) * 100
         color = GREEN if delta < 0 else (GRAY if abs(delta) < 0.5 else AMBER)
-        y = max(o["actual_bitrate"], s["actual_bitrate"]) + top * 0.07
+        y = max(o["actual_bitrate"], s["target_bitrate"]) + top * 0.07
         ax.text(i, y, f"{delta:+.0f}%", ha="center",
                 fontsize=10, fontweight="bold", color=color)
     ax.set_ylim(0, top * 1.22)

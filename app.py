@@ -26,7 +26,7 @@ from src.simulator import BANDWIDTH_PROFILES, simulate_streaming, streaming_kpis
 
 # ── Page setup ─────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="2502e · Bitrate Ladder Optimization",
-                   page_icon="", layout="wide")
+                   page_icon="🎬", layout="wide")
 st.markdown("""
 <style>
 .block-container {padding-top: 2rem;}
@@ -208,11 +208,11 @@ with tab4:
     st.markdown("**Head-to-head at matched resolutions** — each optimized rung "
                 "is compared only against the standard rung of the same resolution:")
     st.dataframe(pd.DataFrame([{
-        "Resolution":        o["resolution"],
-        "Standard (kbps)":   round(s["actual_bitrate"]),
-        "Optimized (kbps)":  round(o["actual_bitrate"]),
-        "Bitrate change (%)": round((o["actual_bitrate"] / s["actual_bitrate"] - 1) * 100, 1),
-        "Standard PSNR (dB)": round(s["psnr"], 2),
+        "Resolution":            o["resolution"],
+        "Standard (kbps, fixed table)": s["target_bitrate"],
+        "Optimized (kbps, measured)":   round(o["actual_bitrate"]),
+        "Bitrate change (%)": round((o["actual_bitrate"] / s["target_bitrate"] - 1) * 100, 1),
+        "Standard PSNR (dB)":  round(s["psnr"], 2),
         "Optimized PSNR (dB)": round(o["psnr"], 2),
     } for o, s in pairs]), use_container_width=True, hide_index=True)
     st.pyplot(plot_ladder_comparison(pairs))

@@ -75,10 +75,17 @@ def matched_pairs(optimized: list[dict], standard: list[dict]) -> list[tuple[dic
 
 
 def bandwidth_savings(optimized: list[dict], standard: list[dict]) -> float:
-    """% bandwidth saved, computed ONLY over matched resolutions."""
+    """
+    % bandwidth saved over matched resolutions.
+
+    Standard side uses the NOMINAL bitrate of the fixed table (what a
+    platform would provision per rung); optimized side uses the MEASURED
+    bitrate this title actually needs. That is the per-title encoding
+    comparison: same resolution, fewer provisioned bits.
+    """
     pairs = matched_pairs(optimized, standard)
     if not pairs:
         return 0.0
     tot_opt = sum(o["actual_bitrate"] for o, _ in pairs)
-    tot_std = sum(s["actual_bitrate"] for _, s in pairs)
+    tot_std = sum(s["target_bitrate"] for _, s in pairs)
     return (1 - tot_opt / tot_std) * 100 if tot_std else 0.0
