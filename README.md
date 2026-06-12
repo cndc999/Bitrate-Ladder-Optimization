@@ -11,18 +11,23 @@ This project focuses on bitrate ladder optimization for adaptive video streaming
 ## Folder Structure
 ```Project
 .
-├── input/                   # Sample input videos
+├── input/                   # Sample input videos (place test clips here)
 │
 ├── src/
 │   ├── __init__.py          # Package initializer
-│   ├── encoder.py           # FFmpeg encoding logic (multi-bitrate)
-│   ├── ladder_optimizer.py  # Convex hull / Pareto frontier algorithm
-│   ├── quality_metrics.py   # PSNR, SSIM, VMAF calculation
-│   ├── stream_simulator.py  # ABR streaming simulation (buffer-based)
-│   ├── video_io.py          # Video input/output (upload, synthetic gen, frame extract)
-│   └── visualizer.py        # Plotly charts, heatmaps, diff maps
+│   ├── encoder.py           # FFmpeg multi-bitrate encoding + ffprobe probing of the ACTUAL bitrate and file size
+│   │                     
+│   ├── quality.py           # PSNR / SSIM, measured at the source resolution for fair cross-resolution comparison
+│   │                        
+│   ├── ladder.py            # Ladder design: convex hull / Pareto frontier selection vs a fixed standard ladder
+│   │                        
+│   ├── visualization.py     # Matplotlib charts: quality curves, target-vs-actual, file size, ladder, simulation
+│   │                        
+│   └── simulator.py         # Buffer-based ABR streaming simulation over configurable bandwidth traces
+│                        
 │
-├── app.py                   # Main Streamlit UI
+├── app.py                   # Main Streamlit UI (5 tabs, one per pipeline step)
+├── README.md                # This file
 └── requirements.txt         # Project dependencies
 ```
 ## Installation & Setup 
